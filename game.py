@@ -60,12 +60,9 @@ class SpriteManager:
             os.makedirs(self.sprites_dir, exist_ok=True)
         self.sprites = {}
         self.colors = {"GDI": C["gdi"], "NOD": C["nod"]}
-        # Defer actual pygame image creation/loading until pygame is ready;
-        # callers should create an instance after pygame.init() so pygame.image is available.
         try:
             self._ensure_and_load()
         except Exception:
-            # If pygame not initialized or image io fails, keep empty dict and allow runtime generation
             pass
 
     def _save_surface(self, surf, path):
@@ -115,17 +112,34 @@ class SpriteManager:
             color = self.colors.get(faction, (200,200,200))
             if not os.path.isfile(path):
                 surf = self._gen_sprite_surface(w, h, color, kind)
-                # attempt to save; if pygame not ready this will be skipped in _save_surface
                 try:
                     pygame.image.save(surf, path)
                 except Exception:
                     pass
             try:
                 img = pygame.image.load(path).convert_alpha()
-                self.sprites[fname] = img
             except Exception:
-                # fallback to generated surface in-memory
-                self.sprites[fname] = self._gen_sprite_surface(w, h, color, kind)
+                img = self._gen_sprite_surface(w, h, color, kind)
+
+            # create a second frame with a small highlight/offset for simple two-frame animation
+            img2 = pygame.Surface((w, h), pygame.SRCALPHA)
+            img2.blit(img, (0,0))
+            try:
+                if kind == 'tank':
+                    pygame.draw.rect(img2, (255,255,180,160), (w-6, 6, 3, 2))
+                elif kind == 'infantry':
+                    pygame.draw.circle(img2, (255,255,255,160), (w//2, 2), 1)
+                elif kind == 'harv':
+                    pygame.draw.rect(img2, (255,255,255,140), (w-4, h//2-2, 3, 3))
+                elif kind == 'turret':
+                    pygame.draw.rect(img2, (255,255,255,180), (w-5, h//2-1, 4, 2))
+                else:
+                    pygame.draw.rect(img2, (255,255,255,80), (w-3, 2, 2, 2))
+            except Exception:
+                pass
+
+            # store as two-frame list
+            self.sprites[fname] = [img, img2]
 
     def get(self, key):
         return self.sprites.get(key)
@@ -405,7 +419,12 @@ class Building:
 
         if sprite:
             try:
-                img = pygame.transform.scale(sprite, (self.pw, self.ph))
+                if isinstance(sprite, (list, tuple)):
+                    idx = (pygame.time.get_ticks() // 300) % len(sprite)
+                    img_src = sprite[idx]
+                else:
+                    img_src = sprite
+                img = pygame.transform.scale(img_src, (self.pw, self.ph))
                 surf.blit(img, (sx, sy))
             except Exception:
                 sprite = None
@@ -805,7 +824,12 @@ class Unit:
 
         if sprite:
             try:
-                img = pygame.transform.scale(sprite, desired_size)
+                if isinstance(sprite, (list, tuple)):
+                    idx = (pygame.time.get_ticks() // 200) % len(sprite)
+                    img_src = sprite[idx]
+                else:
+                    img_src = sprite
+                img = pygame.transform.scale(img_src, desired_size)
                 # center
                 iw, ih = desired_size
                 surf.blit(img, (sx - iw//2, sy - ih//2))
