@@ -141,6 +141,24 @@ class SpriteManager:
             # store as two-frame list
             self.sprites[fname] = [img, img2]
 
+        # Load tile images from assets/tiles and scale to TILE
+        self.tiles = {}
+        tiles_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'tiles')
+        try:
+            for entry in os.listdir(tiles_dir):
+                if entry.lower().endswith('.png'):
+                    p = os.path.join(tiles_dir, entry)
+                    try:
+                        timg = pygame.image.load(p).convert_alpha()
+                        # scale to TILE
+                        timg = pygame.transform.scale(timg, (TILE, TILE))
+                        self.tiles[entry] = timg
+                    except Exception:
+                        pass
+        except Exception:
+            # no tiles directory or pygame not ready
+            pass
+
     def get(self, key):
         return self.sprites.get(key)
 
@@ -292,47 +310,67 @@ class GameMap:
         end_col = min(MAP_COLS, (cam_x + GAME_W) // TILE + 2)
         end_row = min(MAP_ROWS, (cam_y + SCREEN_H) // TILE + 2)
 
+        use_tiles = ('SPRITE_MANAGER' in globals() and SPRITE_MANAGER and hasattr(SPRITE_MANAGER, 'tiles'))
+
         for r in range(start_row, end_row):
             for c in range(start_col, end_col):
                 t = self.tiles[r][c]
                 px = c * TILE - cam_x
                 py = r * TILE - cam_y
 
-                if t == GRASS:
-                    col = C["grass"] if (r + c) % 2 == 0 else C["grass_a"]
-                    pygame.draw.rect(surf, col, (px, py, TILE, TILE))
-                    # Random grass tuft
-                    if (r * 7 + c * 13) % 11 == 0:
-                        tuft_c = C["grass_d"]
-                        pygame.draw.line(surf, tuft_c, (px+8, py+TILE), (px+10, py+TILE-4), 2)
-                        pygame.draw.line(surf, tuft_c, (px+12, py+TILE), (px+15, py+TILE-3), 2)
-                elif t == DIRT:
-                    pygame.draw.rect(surf, C["dirt"], (px, py, TILE, TILE))
-                    # Dirt texture
-                    if (r + c) % 3 == 0:
-                        pygame.draw.circle(surf, C["dirt_d"], (px+8, py+8), 3)
-                elif t == WATER:
-                    pygame.draw.rect(surf, C["water"], (px, py, TILE, TILE))
-                    # Wave highlight
-                    wave_x = (px + (r * 7) % TILE) % TILE
-                    pygame.draw.line(surf, C["water_l"],
-                        (px + wave_x, py + 4), (px + wave_x + 8, py + 2), 2)
-                elif t == TIBERIUM_T:
-                    pygame.draw.rect(surf, C["grass_a"], (px, py, TILE, TILE))
-                    # Crystal shape
-                    glow = C["tiberium_g"]
-                    main = C["tiberium"]
-                    dark = C["tiberium_d"]
-                    # Crystal spike
-                    pts1 = [(px+8, py+TILE), (px+16, py+TILE), (px+12, py+4)]
-                    pygame.draw.polygon(surf, main, pts1)
-                    pts2 = [(px+12, py+TILE), (px+20, py+TILE), (px+18, py+10)]
-                    pygame.draw.polygon(surf, dark, pts2)
-                    # Glow
-                    if random.random() < 0.3:
-                        glow_surf = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-                        pygame.draw.circle(glow_surf, (*main, 60), (TILE//2, TILE//2), 8)
-                        surf.blit(glow_surf, (px, py))
+                drew = False
+                if use_tiles:
+                    # pick tile name based on type with some variation
+                    key = None
+                    if t == GRASS:
+                        # vary between plain and light forest for visual variety
+                        if (r + c) % 11 == 0:
+                            key = 'deep_forest.png'
+                        elif (r + c) % 3 == 0:
+                            key = 'forest.png'
+                        else:
+                            key = 'plain.png'
+                    elif t == DIRT:
+                        key = 'forest.png'
+                    elif t == WATER:
+                        key = 'lake.png'
+                    elif t == TIBERIUM_T:
+                        # use plain as base and crystals draw on top
+                        key = 'plain.png'
+
+                    if key and key in SPRITE_MANAGER.tiles:
+                        try:
+                            surf.blit(SPRITE_MANAGER.tiles[key], (px, py))
+                            drew = True
+                        except Exception:
+                            drew = False
+
+                if not drew:
+                    # fallback to geometric drawing
+                    if t == GRASS:
+                        col = C["grass"] if (r + c) % 2 == 0 else C["grass_a"]
+                        pygame.draw.rect(surf, col, (px, py, TILE, TILE))
+                        # Random grass tuft
+                        if (r * 7 + c * 13) % 11 == 0:
+                            tuft_c = C["grass_d"]
+                            pygame.draw.line(surf, tuft_c, (px+8, py+TILE), (px+10, py+TILE-4), 2)
+                            pygame.draw.line(surf, tuft_c, (px+12, py+TILE), (px+15, py+TILE-3), 2)
+                    elif t == DIRT:
+                        pygame.draw.rect(surf, C["dirt"], (px, py, TILE, TILE))
+                        # Dirt texture
+                        if (r + c) % 3 == 0:
+                            pygame.draw.circle(surf, C["dirt_d"], (px+8, py+8), 3)
+                    elif t == WATER:
+                        pygame.draw.rect(surf, C["water"], (px, py, TILE, TILE))
+                        # Wave highlight
+                        wave_x = (px + (r * 7) % TILE) % TILE
+                        pygame.draw.line(surf, C["water_l"],
+                            (px + wave_x, py + 4), (px + wave_x + 8, py + 2), 2)
+                    elif t == TIBERIUM_T:
+                        pygame.draw.rect(surf, C["grass_a"], (px, py, TILE, TILE))
+                        # Crystal will be drawn by TiberiumCrystal.draw
+
+                # If tiberium present, crystals are drawn later by TiberiumCrystal.draw
 
 # ============================================================
 # BUILDING CLASS
