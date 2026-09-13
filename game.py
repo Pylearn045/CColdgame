@@ -50,6 +50,120 @@ C = {
 }
 
 # ============================================================
+# Sprite manager (simple pixel-art placeholder generator + loader)
+# ============================================================
+class SpriteManager:
+    def __init__(self):
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        self.sprites_dir = os.path.join(script_dir, "assets", "sprites")
+        if not os.path.isdir(self.sprites_dir):
+            os.makedirs(self.sprites_dir, exist_ok=True)
+        self.sprites = {}
+        self.colors = {"GDI": C["gdi"], "NOD": C["nod"]}
+        try:
+            self._ensure_and_load()
+        except Exception:
+            pass
+
+    def _save_surface(self, surf, path):
+        try:
+            pygame.image.save(surf, path)
+        except Exception:
+            pass
+
+    def _gen_sprite_surface(self, w, h, color, kind):
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        surf.fill((0,0,0,0))
+        base_col = color
+        dark = (max(0, base_col[0]-40), max(0, base_col[1]-40), max(0, base_col[2]-40))
+        # Body
+        body_rect = (0, h//4, w, h*3//4)
+        pygame.draw.rect(surf, base_col, body_rect)
+        # Simple details per kind
+        if kind == "tank":
+            pygame.draw.rect(surf, dark, (w*2//5, h//8, w//5, h//3))
+            pygame.draw.rect(surf, (0,0,0), (0, h-3, w, 3))
+        elif kind == "infantry":
+            pygame.draw.circle(surf, (255,255,255), (w//2, h//4), max(2, w//6))
+            pygame.draw.rect(surf, dark, (w//4, h//2, w//2, h//3))
+        elif kind in ("harv", "ref", "cyard", "turret"):
+            pygame.draw.rect(surf, dark, (w//10, h//3, w*8//10, h*4//10))
+            if kind == "turret":
+                pygame.draw.circle(surf, (max(0,base_col[0]-80),max(0,base_col[1]-80),max(0,base_col[2]-80)), (w//2, h//3), max(3, w//6))
+        return surf
+
+    def _ensure_and_load(self):
+        pairs = [
+            ("gdi_tank.png","GDI","tank",24,24),
+            ("nod_tank.png","NOD","tank",24,24),
+            ("gdi_infantry.png","GDI","infantry",12,12),
+            ("nod_infantry.png","NOD","infantry",12,12),
+            ("gdi_harv.png","GDI","harv",28,20),
+            ("nod_harv.png","NOD","harv",28,20),
+            ("gdi_cyard.png","GDI","cyard",48,48),
+            ("nod_cyard.png","NOD","cyard",48,48),
+            ("gdi_refinery.png","GDI","ref",32,24),
+            ("nod_refinery.png","NOD","ref",32,24),
+            ("gdi_turret.png","GDI","turret",24,24),
+            ("nod_turret.png","NOD","turret",24,24),
+        ]
+        for fname, faction, kind, w, h in pairs:
+            path = os.path.join(self.sprites_dir, fname)
+            color = self.colors.get(faction, (200,200,200))
+            if not os.path.isfile(path):
+                surf = self._gen_sprite_surface(w, h, color, kind)
+                try:
+                    pygame.image.save(surf, path)
+                except Exception:
+                    pass
+            try:
+                img = pygame.image.load(path).convert_alpha()
+            except Exception:
+                img = self._gen_sprite_surface(w, h, color, kind)
+
+            # create a second frame with a small highlight/offset for simple two-frame animation
+            img2 = pygame.Surface((w, h), pygame.SRCALPHA)
+            img2.blit(img, (0,0))
+            try:
+                if kind == 'tank':
+                    pygame.draw.rect(img2, (255,255,180,160), (w-6, 6, 3, 2))
+                elif kind == 'infantry':
+                    pygame.draw.circle(img2, (255,255,255,160), (w//2, 2), 1)
+                elif kind == 'harv':
+                    pygame.draw.rect(img2, (255,255,255,140), (w-4, h//2-2, 3, 3))
+                elif kind == 'turret':
+                    pygame.draw.rect(img2, (255,255,255,180), (w-5, h//2-1, 4, 2))
+                else:
+                    pygame.draw.rect(img2, (255,255,255,80), (w-3, 2, 2, 2))
+            except Exception:
+                pass
+
+            # store as two-frame list
+            self.sprites[fname] = [img, img2]
+
+        # Load tile images from assets/tiles and scale to TILE
+        self.tiles = {}
+        tiles_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets', 'tiles')
+        try:
+            for entry in os.listdir(tiles_dir):
+                if entry.lower().endswith('.png'):
+                    p = os.path.join(tiles_dir, entry)
+                    try:
+                        timg = pygame.image.load(p).convert_alpha()
+                        # scale to TILE
+                        timg = pygame.transform.scale(timg, (TILE, TILE))
+                        self.tiles[entry] = timg
+                    except Exception:
+                        pass
+        except Exception:
+            # no tiles directory or pygame not ready
+            pass
+
+    def get(self, key):
+        return self.sprites.get(key)
+
+
+# ============================================================
 # GAME MAP
 # ============================================================
 class GameMap:
@@ -196,47 +310,67 @@ class GameMap:
         end_col = min(MAP_COLS, (cam_x + GAME_W) // TILE + 2)
         end_row = min(MAP_ROWS, (cam_y + SCREEN_H) // TILE + 2)
 
+        use_tiles = ('SPRITE_MANAGER' in globals() and SPRITE_MANAGER and hasattr(SPRITE_MANAGER, 'tiles'))
+
         for r in range(start_row, end_row):
             for c in range(start_col, end_col):
                 t = self.tiles[r][c]
                 px = c * TILE - cam_x
                 py = r * TILE - cam_y
 
-                if t == GRASS:
-                    col = C["grass"] if (r + c) % 2 == 0 else C["grass_a"]
-                    pygame.draw.rect(surf, col, (px, py, TILE, TILE))
-                    # Random grass tuft
-                    if (r * 7 + c * 13) % 11 == 0:
-                        tuft_c = C["grass_d"]
-                        pygame.draw.line(surf, tuft_c, (px+8, py+TILE), (px+10, py+TILE-4), 2)
-                        pygame.draw.line(surf, tuft_c, (px+12, py+TILE), (px+15, py+TILE-3), 2)
-                elif t == DIRT:
-                    pygame.draw.rect(surf, C["dirt"], (px, py, TILE, TILE))
-                    # Dirt texture
-                    if (r + c) % 3 == 0:
-                        pygame.draw.circle(surf, C["dirt_d"], (px+8, py+8), 3)
-                elif t == WATER:
-                    pygame.draw.rect(surf, C["water"], (px, py, TILE, TILE))
-                    # Wave highlight
-                    wave_x = (px + (r * 7) % TILE) % TILE
-                    pygame.draw.line(surf, C["water_l"],
-                        (px + wave_x, py + 4), (px + wave_x + 8, py + 2), 2)
-                elif t == TIBERIUM_T:
-                    pygame.draw.rect(surf, C["grass_a"], (px, py, TILE, TILE))
-                    # Crystal shape
-                    glow = C["tiberium_g"]
-                    main = C["tiberium"]
-                    dark = C["tiberium_d"]
-                    # Crystal spike
-                    pts1 = [(px+8, py+TILE), (px+16, py+TILE), (px+12, py+4)]
-                    pygame.draw.polygon(surf, main, pts1)
-                    pts2 = [(px+12, py+TILE), (px+20, py+TILE), (px+18, py+10)]
-                    pygame.draw.polygon(surf, dark, pts2)
-                    # Glow
-                    if random.random() < 0.3:
-                        glow_surf = pygame.Surface((TILE, TILE), pygame.SRCALPHA)
-                        pygame.draw.circle(glow_surf, (*main, 60), (TILE//2, TILE//2), 8)
-                        surf.blit(glow_surf, (px, py))
+                drew = False
+                if use_tiles:
+                    # pick tile name based on type with some variation
+                    key = None
+                    if t == GRASS:
+                        # vary between plain and light forest for visual variety
+                        if (r + c) % 11 == 0:
+                            key = 'deep_forest.png'
+                        elif (r + c) % 3 == 0:
+                            key = 'forest.png'
+                        else:
+                            key = 'plain.png'
+                    elif t == DIRT:
+                        key = 'forest.png'
+                    elif t == WATER:
+                        key = 'lake.png'
+                    elif t == TIBERIUM_T:
+                        # use plain as base and crystals draw on top
+                        key = 'plain.png'
+
+                    if key and key in SPRITE_MANAGER.tiles:
+                        try:
+                            surf.blit(SPRITE_MANAGER.tiles[key], (px, py))
+                            drew = True
+                        except Exception:
+                            drew = False
+
+                if not drew:
+                    # fallback to geometric drawing
+                    if t == GRASS:
+                        col = C["grass"] if (r + c) % 2 == 0 else C["grass_a"]
+                        pygame.draw.rect(surf, col, (px, py, TILE, TILE))
+                        # Random grass tuft
+                        if (r * 7 + c * 13) % 11 == 0:
+                            tuft_c = C["grass_d"]
+                            pygame.draw.line(surf, tuft_c, (px+8, py+TILE), (px+10, py+TILE-4), 2)
+                            pygame.draw.line(surf, tuft_c, (px+12, py+TILE), (px+15, py+TILE-3), 2)
+                    elif t == DIRT:
+                        pygame.draw.rect(surf, C["dirt"], (px, py, TILE, TILE))
+                        # Dirt texture
+                        if (r + c) % 3 == 0:
+                            pygame.draw.circle(surf, C["dirt_d"], (px+8, py+8), 3)
+                    elif t == WATER:
+                        pygame.draw.rect(surf, C["water"], (px, py, TILE, TILE))
+                        # Wave highlight
+                        wave_x = (px + (r * 7) % TILE) % TILE
+                        pygame.draw.line(surf, C["water_l"],
+                            (px + wave_x, py + 4), (px + wave_x + 8, py + 2), 2)
+                    elif t == TIBERIUM_T:
+                        pygame.draw.rect(surf, C["grass_a"], (px, py, TILE, TILE))
+                        # Crystal will be drawn by TiberiumCrystal.draw
+
+                # If tiberium present, crystals are drawn later by TiberiumCrystal.draw
 
 # ============================================================
 # BUILDING CLASS
@@ -291,8 +425,10 @@ class Building:
         sx, sy = self.px - cam_x, self.py - cam_y
         if self.faction == GDI:
             main_c, light_c, dark_c = C["gdi"], C["gdi_l"], C["gdi_d"]
+            pref = "gdi"
         else:
             main_c, light_c, dark_c = C["nod"], C["nod_l"], C["nod_d"]
+            pref = "nod"
 
         # Skip if off screen
         if sx + self.pw < -50 or sx > GAME_W + 50:
@@ -300,46 +436,77 @@ class Building:
         if sy + self.ph < -50 or sy > SCREEN_H + 50:
             return
 
-        # Main body
-        pygame.draw.rect(surf, dark_c, (sx, sy, self.pw, self.ph))
-        pygame.draw.rect(surf, main_c, (sx + 2, sy + 2, self.pw - 4, self.ph - 4))
-        inner = pygame.Rect(sx + 4, sy + 4, self.pw - 8, self.ph - 8)
-        pygame.draw.rect(surf, (max(0,main_c[0]-25), max(0,main_c[1]-25), max(0,main_c[2]-25)), inner)
-
-        # Building-specific details
+        # Try to draw sprite if available
+        sprite_name = None
         if self.btype == B_CYARD:
-            midx = sx + self.pw // 2
-            pygame.draw.rect(surf, C["gray"], (midx - 4, sy - 6, 8, 8))
-            pygame.draw.rect(surf, C["sb_acc"], (midx - 2, sy - 10, 4, 4))
-            pygame.draw.rect(surf, light_c, (sx + 4, sy + self.ph - 12, 10, 12))
+            sprite_name = f"{pref}_cyard.png"
         elif self.btype == B_POWER:
-            pygame.draw.circle(surf, light_c, (sx + self.pw//2, sy + self.ph//2), 10)
-            pygame.draw.circle(surf, C["sb_acc"], (sx + self.pw//2, sy + self.ph//2), 5)
-            if self.anim % 20 < 10:
-                pygame.draw.circle(surf, C["white"], (sx + self.pw//2, sy + self.ph//2), 2)
+            sprite_name = f"{pref}_refinery.png"
         elif self.btype == B_BARRACKS:
-            roof = [(sx, sy), (sx+self.pw, sy), (sx+self.pw-4, sy-8), (sx+4, sy-8)]
-            pygame.draw.polygon(surf, light_c, roof)
-            pygame.draw.rect(surf, dark_c, (sx + self.pw//2 - 5, sy + self.ph - 10, 10, 10))
+            sprite_name = f"{pref}_cyard.png"
         elif self.btype == B_REFINERY:
-            pygame.draw.rect(surf, C["gray"], (sx + self.pw - 12, sy + 2, 10, self.ph - 4))
-            pygame.draw.rect(surf, C["tiberium"], (sx + self.pw - 10, sy + 4, 6, self.ph - 8))
-            pygame.draw.rect(surf, dark_c, (sx + 4, sy + self.ph - 12, 12, 12))
+            sprite_name = f"{pref}_refinery.png"
         elif self.btype == B_WARFACTORY:
-            pygame.draw.rect(surf, dark_c, (sx + self.pw//2 - 8, sy + self.ph - 14, 16, 14))
-            pygame.draw.rect(surf, C["gray"], (sx + self.pw//2 - 4, sy + self.ph - 10, 8, 6))
+            sprite_name = f"{pref}_cyard.png"
+        elif self.btype == B_TURRET:
+            sprite_name = f"{pref}_turret.png"
 
-        # Turret-specific: circular base + rotating barrel
-        if self.btype == B_TURRET:
-            cx, cy = sx + self.pw // 2, sy + self.ph // 2
-            pygame.draw.circle(surf, dark_c, (cx, cy), self.pw // 2)
-            pygame.draw.circle(surf, main_c, (cx, cy), self.pw // 2 - 3)
-            
-            angle = (self.anim / 60.0) * 6.28318
-            bx = cx + int(10 * math.cos(angle))
-            by = cy + int(10 * math.sin(angle))
-            pygame.draw.line(surf, dark_c, (cx, cy), (bx, by), 4)
-            pygame.draw.circle(surf, light_c, (cx, cy), 4)
+        sprite = None
+        if 'SPRITE_MANAGER' in globals() and SPRITE_MANAGER:
+            sprite = SPRITE_MANAGER.get(sprite_name) if sprite_name else None
+
+        if sprite:
+            try:
+                if isinstance(sprite, (list, tuple)):
+                    idx = (pygame.time.get_ticks() // 300) % len(sprite)
+                    img_src = sprite[idx]
+                else:
+                    img_src = sprite
+                img = pygame.transform.scale(img_src, (self.pw, self.ph))
+                surf.blit(img, (sx, sy))
+            except Exception:
+                sprite = None
+
+        if not sprite:
+            # Fallback to original geometric drawing
+            pygame.draw.rect(surf, dark_c, (sx, sy, self.pw, self.ph))
+            pygame.draw.rect(surf, main_c, (sx + 2, sy + 2, self.pw - 4, self.ph - 4))
+            inner = pygame.Rect(sx + 4, sy + 4, self.pw - 8, self.ph - 8)
+            pygame.draw.rect(surf, (max(0,main_c[0]-25), max(0,main_c[1]-25), max(0,main_c[2]-25)), inner)
+
+            # Building-specific details
+            if self.btype == B_CYARD:
+                midx = sx + self.pw // 2
+                pygame.draw.rect(surf, C["gray"], (midx - 4, sy - 6, 8, 8))
+                pygame.draw.rect(surf, C["sb_acc"], (midx - 2, sy - 10, 4, 4))
+                pygame.draw.rect(surf, light_c, (sx + 4, sy + self.ph - 12, 10, 12))
+            elif self.btype == B_POWER:
+                pygame.draw.circle(surf, light_c, (sx + self.pw//2, sy + self.ph//2), 10)
+                pygame.draw.circle(surf, C["sb_acc"], (sx + self.pw//2, sy + self.ph//2), 5)
+                if self.anim % 20 < 10:
+                    pygame.draw.circle(surf, C["white"], (sx + self.pw//2, sy + self.ph//2), 2)
+            elif self.btype == B_BARRACKS:
+                roof = [(sx, sy), (sx+self.pw, sy), (sx+self.pw-4, sy-8), (sx+4, sy-8)]
+                pygame.draw.polygon(surf, light_c, roof)
+                pygame.draw.rect(surf, dark_c, (sx + self.pw//2 - 5, sy + self.ph - 10, 10, 10))
+            elif self.btype == B_REFINERY:
+                pygame.draw.rect(surf, C["gray"], (sx + self.pw - 12, sy + 2, 10, self.ph - 4))
+                pygame.draw.rect(surf, C["tiberium"], (sx + self.pw - 10, sy + 4, 6, self.ph - 8))
+                pygame.draw.rect(surf, dark_c, (sx + 4, sy + self.ph - 12, 12, 12))
+            elif self.btype == B_WARFACTORY:
+                pygame.draw.rect(surf, dark_c, (sx + self.pw//2 - 8, sy + self.ph - 14, 16, 14))
+                pygame.draw.rect(surf, C["gray"], (sx + self.pw//2 - 4, sy + self.ph - 10, 8, 6))
+
+            # Turret-specific: circular base + rotating barrel
+            if self.btype == B_TURRET:
+                cx, cy = sx + self.pw // 2, sy + self.ph // 2
+                pygame.draw.circle(surf, dark_c, (cx, cy), self.pw // 2)
+                pygame.draw.circle(surf, main_c, (cx, cy), self.pw // 2 - 3)
+                angle = (self.anim / 60.0) * 6.28318
+                bx = cx + int(10 * math.cos(angle))
+                by = cy + int(10 * math.sin(angle))
+                pygame.draw.line(surf, dark_c, (cx, cy), (bx, by), 4)
+                pygame.draw.circle(surf, light_c, (cx, cy), 4)
 
         # Selection
         if selected:
@@ -671,53 +838,91 @@ class Unit:
         main_c, light_c, dark_c = (C["gdi"], C["gdi_l"], C["gdi_d"]) if self.faction == GDI \
             else (C["nod"], C["nod_l"], C["nod_d"])
 
-        if self.armor == "infantry":
-            body_r = 7 if self.utype == U_ROCKET else 5
-            # Body
-            pygame.draw.circle(surf, dark_c, (sx, sy), body_r + 1)
-            pygame.draw.circle(surf, main_c, (sx, sy), body_r)
-            # Head
-            pygame.draw.circle(surf, C["white"], (sx, sy - body_r - 2), 3)
-            # Gun
-            if self.facing == 0:
-                pygame.draw.line(surf, dark_c, (sx+body_r, sy), (sx+body_r+8, sy), 2)
-            elif self.facing == 1:
-                pygame.draw.line(surf, dark_c, (sx, sy+body_r), (sx, sy+body_r+8), 2)
-            elif self.facing == 2:
-                pygame.draw.line(surf, dark_c, (sx-body_r, sy), (sx-body_r-8, sy), 2)
-            else:
-                pygame.draw.line(surf, dark_c, (sx, sy-body_r), (sx, sy-body_r-8), 2)
-            # Rocket soldier backpack
-            if self.utype == U_ROCKET:
-                pygame.draw.circle(surf, C["gray"], (sx, sy - body_r // 2), 3)
+        # Determine sprite key
+        pref = "gdi" if self.faction == GDI else "nod"
+        if self.utype == U_MINIGUN or self.armor == "infantry":
+            sprite_key = f"{pref}_infantry.png"
+            desired_size = (12,12)
+        elif self.utype == U_ROCKET:
+            sprite_key = f"{pref}_infantry.png"
+            desired_size = (14,14)
+        elif self.utype == U_TANK:
+            sprite_key = f"{pref}_tank.png"
+            desired_size = (24,24)
+        elif self.utype == U_HARV:
+            sprite_key = f"{pref}_harv.png"
+            desired_size = (28,20)
         else:
-            half_w = 12 if self.utype == U_TANK else 14
-            half_h = 10 if self.utype == U_TANK else 12
-            # Shadow
-            pygame.draw.ellipse(surf, (0,0,0,80), (sx-half_w+1, sy-half_h+1, half_w*2, half_h*2))
-            # Body
-            pygame.draw.rect(surf, dark_c, (sx-half_w, sy-half_h, half_w*2, half_h*2))
-            pygame.draw.rect(surf, main_c, (sx-half_w+1, sy-half_h+1, half_w*2-2, half_h*2-2))
-            # Turret / detail
-            if self.utype == U_TANK:
-                pygame.draw.circle(surf, light_c, (sx, sy), 6)
-                if self.facing == 0:
-                    pygame.draw.rect(surf, dark_c, (sx+3, sy-2, 12, 4))
-                elif self.facing == 1:
-                    pygame.draw.rect(surf, dark_c, (sx-2, sy+3, 4, 12))
-                elif self.facing == 2:
-                    pygame.draw.rect(surf, dark_c, (sx-15, sy-2, 12, 4))
+            sprite_key = None
+            desired_size = (16,16)
+
+        sprite = None
+        if 'SPRITE_MANAGER' in globals() and SPRITE_MANAGER and sprite_key:
+            sprite = SPRITE_MANAGER.get(sprite_key)
+
+        if sprite:
+            try:
+                if isinstance(sprite, (list, tuple)):
+                    idx = (pygame.time.get_ticks() // 200) % len(sprite)
+                    img_src = sprite[idx]
                 else:
-                    pygame.draw.rect(surf, dark_c, (sx-2, sy-15, 4, 12))
-                # Treads
-                pygame.draw.rect(surf, (0,0,0), (sx-half_w, sy-half_h-2, half_w*2, 2))
-                pygame.draw.rect(surf, (0,0,0), (sx-half_w, sy+half_h, half_w*2, 2))
+                    img_src = sprite
+                img = pygame.transform.scale(img_src, desired_size)
+                # center
+                iw, ih = desired_size
+                surf.blit(img, (sx - iw//2, sy - ih//2))
+            except Exception:
+                sprite = None
+
+        if not sprite:
+            # Fallback to original geometric drawing
+            if self.armor == "infantry":
+                body_r = 7 if self.utype == U_ROCKET else 5
+                # Body
+                pygame.draw.circle(surf, dark_c, (sx, sy), body_r + 1)
+                pygame.draw.circle(surf, main_c, (sx, sy), body_r)
+                # Head
+                pygame.draw.circle(surf, C["white"], (sx, sy - body_r - 2), 3)
+                # Gun
+                if self.facing == 0:
+                    pygame.draw.line(surf, dark_c, (sx+body_r, sy), (sx+body_r+8, sy), 2)
+                elif self.facing == 1:
+                    pygame.draw.line(surf, dark_c, (sx, sy+body_r), (sx, sy+body_r+8), 2)
+                elif self.facing == 2:
+                    pygame.draw.line(surf, dark_c, (sx-body_r, sy), (sx-body_r-8, sy), 2)
+                else:
+                    pygame.draw.line(surf, dark_c, (sx, sy-body_r), (sx, sy-body_r-8), 2)
+                # Rocket soldier backpack
+                if self.utype == U_ROCKET:
+                    pygame.draw.circle(surf, C["gray"], (sx, sy - body_r // 2), 3)
             else:
-                # Harvester
-                pygame.draw.rect(surf, C["gray"], (sx-half_w+1, sy+half_h-5, half_w*2-2, 4))
-                if self.harvest_cargo > 0:
-                    pct = self.harvest_cargo / HARV_CAP
-                    pygame.draw.rect(surf, C["tiberium"], (sx-half_w+1, sy-half_h+1, int((half_w*2-2)*pct), 3))
+                half_w = 12 if self.utype == U_TANK else 14
+                half_h = 10 if self.utype == U_TANK else 12
+                # Shadow
+                pygame.draw.ellipse(surf, (0,0,0,80), (sx-half_w+1, sy-half_h+1, half_w*2, half_h*2))
+                # Body
+                pygame.draw.rect(surf, dark_c, (sx-half_w, sy-half_h, half_w*2, half_h*2))
+                pygame.draw.rect(surf, main_c, (sx-half_w+1, sy-half_h+1, half_w*2-2, half_h*2-2))
+                # Turret / detail
+                if self.utype == U_TANK:
+                    pygame.draw.circle(surf, light_c, (sx, sy), 6)
+                    if self.facing == 0:
+                        pygame.draw.rect(surf, dark_c, (sx+3, sy-2, 12, 4))
+                    elif self.facing == 1:
+                        pygame.draw.rect(surf, dark_c, (sx-2, sy+3, 4, 12))
+                    elif self.facing == 2:
+                        pygame.draw.rect(surf, dark_c, (sx-15, sy-2, 12, 4))
+                    else:
+                        pygame.draw.rect(surf, dark_c, (sx-2, sy-15, 4, 12))
+                    # Treads
+                    pygame.draw.rect(surf, (0,0,0), (sx-half_w, sy-half_h-2, half_w*2, 2))
+                    pygame.draw.rect(surf, (0,0,0), (sx-half_w, sy+half_h, half_w*2, 2))
+                else:
+                    # Harvester
+                    pygame.draw.rect(surf, C["gray"], (sx-half_w+1, sy+half_h-5, half_w*2-2, 4))
+                    if self.harvest_cargo > 0:
+                        pct = self.harvest_cargo / HARV_CAP
+                        pygame.draw.rect(surf, C["tiberium"], (sx-half_w+1, sy-half_h+1, int((half_w*2-2)*pct), 3))
 
         # Selection circle
         if selected:
@@ -1154,6 +1359,14 @@ class Game:
         self.running = True
         self.sound_mgr = SoundManager()
         self.sound_mgr.start_music()
+        # Initialize sprite manager (creates/loads placeholder sprites under assets/sprites)
+        try:
+            self.sprite_manager = SpriteManager()
+            global SPRITE_MANAGER
+            SPRITE_MANAGER = self.sprite_manager
+        except Exception:
+            self.sprite_manager = None
+            SPRITE_MANAGER = None
         self.reset_game()
 
     def reset_game(self):
